@@ -1,0 +1,135 @@
+#!/usr/bin/expect
+# expect script to update legacy cisco kit, by Mike Lee
+# date 19/July/2015
+# version 1.0
+# initial script
+
+set timeout 2
+match_max 10000
+set user     [lindex $argv 0]
+set host     [lindex $argv 1]
+set password [lindex $argv 2]
+set enable   [lindex $argv 3]
+
+# Log results
+log_file -a results.txt
+set force_conservative 1
+
+
+if {$force_conservative} {
+  set send_slow {1 .1}
+  proc send {ignore arg} {
+    sleep .1
+    exp_send -s -- $arg
+  }
+}
+
+proc login {host user password} {
+  expect {
+    "nkown host"                          { send_user ">>>>>  Host($host) is unkown. <<<<<\n"; return 1 }
+    "onnection refused"                   { send_user ">>>>>  Connection was refused to host: $host <<<<<\n"; return 1 }
+    "Escape character is '^]'."           { exp_continue }
+    -re "Username:.*$|username:.*$"       { exp_send "$user\r"; exp_continue }
+    -re "Password:.*$|password:$"         { exp_send "$password\r"; return 0 }
+    timeout                               { send_user ">>>>>  Telnet timed out waiting for host: $host <<<<<\n"; return 1 }
+  }
+}
+
+proc priv {enable} {
+  expect {
+  	">"                                   { exp_send "enable\r"; exp_continue }
+  	-re "Password:.*$|password:$"         { exp_send "$enable\r"; return 0 }
+    timeout                               { send_user ">>>>>  Incorrect enable password for host: $host <<<<<\n"; return 1 }
+  }
+}
+
+proc update {host} {
+  set cmd "copy tftp://10.0.1.17/acl-10-update.txt running-config\r"
+  exp_send $cmd
+  expect {
+    -re "(.+running-config...+)"          { exp_send "\r"; exp_continue }
+    -re ".+OK.-.+"                        { sleep 7; exp_send "write mem\r"; exp_continue}
+    -re ".OK."                            { sleep 1; send_user ">>>>>  Update Successful for: $host <<<<<\n"; return 0 }
+    -re "(.Error.+)"                      { send_user ">>>>>  Update Error for: $host <<<<<\n"; return 1 }
+    timeout                               { send_user ">>>>>  Update timeout for host: $host <<<<<\n"; return 1 }    
+  }
+}
+
+proc gethost {} {
+  set newlinechar "\r"
+  exp_send $newlinechar
+  expect -re "(.+#)"
+  set values $expect_out(buffer)
+  set result [regexp {(.+[^#])} $values match tftpout]
+  set output [string trimleft $tftpout]
+  return $output.cfg
+}
+
+proc tftpcfg {host} {
+  set result [gethost]
+  set cmd "copy start tftp://10.0.1.17/$result\r"
+  exp_send $cmd
+  expect {
+    -re "(.+ddress.+)"                    { exp_send "\r"; sleep 1; exp_send "\r"; exp_continue }
+    -re "(.+copied.)+"                    { sleep 2; exp_send "exit\r"; send_user ">>>>>  TFTP-Out Successful for: $host <<<<<\n"; return 0 }
+    -re "(.Error.+)"                      { send_user ">>>>>  TFTP-Out Error for: $host <<<<<\n"; return 1 }
+    timeout                               { send_user ">>>>>  TFTP-Out timeout for host: $host <<<<<\n"; return 1 }    
+  } 
+}
+
+catch { spawn -noecho telnet -K $host }
+
+if {$host == "" || $user == ""} {
+  #TODO!
+  puts "Usage"
+  puts "Usage"
+  puts "Usage"
+} else {
+  # attempt connection to $host
+  send_user "\n\n>>>>>  Working on $host @ [exec date] <<<<<\n"
+  set login_results [login $host $user $password]
+
+  # if login successful enter privilege mode
+  if {$login_results == 0} {
+    sleep .1 
+    set priv_results [priv $enable]
+  }
+  
+  # If successful connection, continue, else exit denoting error occured.
+  if { $login_results == 0 } {
+    send_user "\n>>>>>  Logged in Successfully <<<<<\n"
+    # Announce which device we are working on and at what time
+    if {$priv_results == 0} {
+      sleep .1
+      send_user "\n>>>>>  Priv Mode Successful <<<<<\n"
+      # Update configuration
+      set result [update $host]
+      if {$result == 0} {
+        sleep .1
+        send_user "\n>>>>>  Update Successful <<<<<\n"
+      } else {
+        send_user "\n>>>>>  Update Failed! <<<<<\n"
+        exit 1  
+      }
+      exp_send "\r"
+      unset result
+      # Backup configuration   
+      set result [tftpcfg $host]
+      if {$result == 0} {
+        sleep .1
+        send_user "\n>>>>>  TFTP Transfer Successful <<<<<\n"
+      } else {
+        send_user "\n>>>>>  TFTP Transfer Failed! <<<<<\n"
+        exit 1
+      }
+      #interact  
+    }
+    # Successful telnet session so exit with zero status
+    exit 0
+  } else {
+    # Error connecting to host so exit with non-zero status
+    send_user "\n\n>>>>>  Error connecting to $host @ [exec date] <<<<<\n"
+    exit 1
+  }
+}
+

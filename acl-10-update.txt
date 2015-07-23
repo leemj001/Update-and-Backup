@@ -1,0 +1,11 @@
+no access-list 10
+access-list 10 permit 139.80.6.0 0.0.0.255
+access-list 10 permit 139.80.64.0 0.0.0.255
+access-list 10 permit 139.80.76.0 0.0.0.255
+access-list 10 permit 10.4.253.0 0.0.0.255
+access-list 10 permit 10.0.1.0 0.255.0.255
+access-list 10 permit 10.0.254.1 0.255.0.0
+access-list 10 permit 10.64.40.0 0.0.0.255
+access-list 10 permit 10.64.41.0 0.0.0.255
+access-list 10 deny   any
+end
